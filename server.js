@@ -145,7 +145,7 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
 });
 
-// Obtener QR Code
+// Obtener QR Code (JSON)
 app.get('/instance/qr', authenticate, async (req, res) => {
     try {
         if (connectionState === 'open') {
@@ -174,6 +174,79 @@ app.get('/instance/qr', authenticate, async (req, res) => {
             error: true,
             message: error.message
         });
+    }
+});
+
+// QR Visual en HTML (SIN autenticación para fácil acceso)
+app.get('/qr', async (req, res) => {
+    try {
+        if (connectionState === 'open') {
+            return res.send(`
+                <html>
+                    <head><title>WhatsApp Connected</title></head>
+                    <body style="text-align:center; font-family:Arial; padding:50px;">
+                        <h1>✅ WhatsApp Conectado</h1>
+                        <p>La instancia ya está conectada a WhatsApp</p>
+                        <button onclick="location.reload()">Actualizar</button>
+                    </body>
+                </html>
+            `);
+        }
+        
+        if (qrDinamic) {
+            const qrBase64 = await qrcode.toDataURL(qrDinamic);
+            res.send(`
+                <html>
+                    <head>
+                        <title>Conectar WhatsApp - Clínica</title>
+                        <meta charset="utf-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1">
+                    </head>
+                    <body style="text-align:center; font-family:Arial; padding:20px; background:#f5f5f5;">
+                        <div style="background:white; padding:30px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1); max-width:400px; margin:0 auto;">
+                            <h1 style="color:#25D366;">📱 Conectar WhatsApp</h1>
+                            <p style="color:#666;">Escanea este código QR con WhatsApp</p>
+                            <div style="margin:20px 0;">
+                                <img src="${qrBase64}" style="max-width:300px; border:2px solid #25D366; border-radius:10px;">
+                            </div>
+                            <p style="font-size:14px; color:#888;">
+                                WhatsApp → Configuración → Dispositivos vinculados → Vincular dispositivo
+                            </p>
+                            <button onclick="location.reload()" style="background:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; margin-top:10px;">
+                                🔄 Actualizar QR
+                            </button>
+                        </div>
+                        <script>
+                            // Auto-refresh cada 30 segundos
+                            setTimeout(() => location.reload(), 30000);
+                        </script>
+                    </body>
+                </html>
+            `);
+        } else {
+            res.send(`
+                <html>
+                    <head><title>Generando QR...</title></head>
+                    <body style="text-align:center; font-family:Arial; padding:50px;">
+                        <h1>⏳ Generando código QR...</h1>
+                        <p>Espera un momento mientras se genera el código</p>
+                        <button onclick="location.reload()">Actualizar</button>
+                        <script>setTimeout(() => location.reload(), 3000);</script>
+                    </body>
+                </html>
+            `);
+        }
+    } catch (error) {
+        res.send(`
+            <html>
+                <head><title>Error</title></head>
+                <body style="text-align:center; font-family:Arial; padding:50px;">
+                    <h1>❌ Error</h1>
+                    <p>${error.message}</p>
+                    <button onclick="location.reload()">Reintentar</button>
+                </body>
+            </html>
+        `);
     }
 });
 
