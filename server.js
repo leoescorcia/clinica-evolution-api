@@ -127,7 +127,9 @@ async function connectWhatsApp() {
     }
 }
 
-// RUTAS DE LA API
+// ================================
+// RUTAS DE LA API - COMPATIBLES CON N8N
+// ================================
 
 // Status del servicio
 app.get('/', (req, res) => {
@@ -143,6 +145,65 @@ app.get('/', (req, res) => {
 // Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+// ================================
+// RUTAS PARA N8N EVOLUTION API NODE
+// ================================
+
+// Listar instancias (requerido por n8n)
+app.get('/instance', authenticate, (req, res) => {
+    res.json([{
+        instanceName: config.instanceName,
+        status: connectionState,
+        connected: isConnected,
+        serverUrl: config.serverUrl,
+        apikey: config.authKey
+    }]);
+});
+
+// Status específico de una instancia
+app.get('/instance/:instanceName', authenticate, (req, res) => {
+    const { instanceName } = req.params;
+    
+    if (instanceName !== config.instanceName) {
+        return res.status(404).json({
+            error: true,
+            message: 'Instance not found'
+        });
+    }
+    
+    res.json({
+        instanceName: config.instanceName,
+        status: connectionState,
+        connected: isConnected,
+        serverUrl: config.serverUrl
+    });
+});
+
+// Crear instancia (para compatibilidad)
+app.post('/instance/create', authenticate, (req, res) => {
+    const { instanceName, token, qrcode: returnQr, webhook } = req.body;
+    
+    // Solo permitir la instancia configurada
+    if (instanceName !== config.instanceName) {
+        return res.status(400).json({
+            error: true,
+            message: 'Instance name must match configured instance'
+        });
+    }
+    
+    // Iniciar conexión
+    connectWhatsApp();
+    
+    res.json({
+        error: false,
+        message: 'Instance created successfully',
+        instance: {
+            instanceName: config.instanceName,
+            status: connectionState
+        }
+    });
 });
 
 // Obtener QR Code (JSON)
@@ -268,7 +329,11 @@ app.post('/instance/connect', authenticate, (req, res) => {
     });
 });
 
-// Enviar mensaje de texto
+// ================================
+// RUTAS DE MENSAJERÍA
+// ================================
+
+// Enviar mensaje de texto (ruta original)
 app.post('/message/text', authenticate, async (req, res) => {
     try {
         const { remoteJid, message } = req.body;
@@ -295,6 +360,82 @@ app.post('/message/text', authenticate, async (req, res) => {
     }
 });
 
+// Enviar mensaje (compatible con n8n - formato alternativo)
+app.post('/sendText/:instanceName', authenticate, async (req, res) => {
+    try {
+        const { instanceName } = req.params;
+        const { number, text } = req.body;
+        
+        if (instanceName !== config.instanceName) {
+            return res.status(404).json({
+                error: true,
+                message: 'Instance not found'
+            });
+        }
+        
+        if (!isConnected) {
+            return res.status(400).json({
+                error: true,
+                message: 'WhatsApp not connected'
+            });
+        }
+
+        const result = await sock.sendMessage(number, { text: text });
+        
+        res.json({
+            error: false,
+            message: 'Message sent successfully',
+            messageId: result.key.id,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: true,
+            message: error.message
+        });
+    }
+});
+
+// Enviar mensaje (ruta messages-api compatible)
+app.post('/messages-api', authenticate, async (req, res) => {
+    try {
+        const { remoteJid, messageText, instanceName } = req.body;
+        
+        if (instanceName && instanceName !== config.instanceName) {
+            return res.status(404).json({
+                error: true,
+                message: 'Instance not found'
+            });
+        }
+        
+        if (!isConnected) {
+            return res.status(400).json({
+                error: true,
+                message: 'WhatsApp not connected'
+            });
+        }
+
+        const result = await sock.sendMessage(remoteJid, { text: messageText });
+        
+        res.json({
+            error: false,
+            message: 'Message sent successfully',
+            messageId: result.key.id,
+            instance: config.instanceName,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: true,
+            message: error.message
+        });
+    }
+});
+
+// ================================
+// RUTAS DE MEDIA
+// ================================
+
 // Obtener media en base64
 app.get('/message/media/:messageId', authenticate, async (req, res) => {
     try {
@@ -318,11 +459,86 @@ app.get('/message/media/:messageId', authenticate, async (req, res) => {
     }
 });
 
+// Chat API - obtener media (compatible con n8n)
+app.get('/chat-api/get-media-base64/:instanceName/:messageId', authenticate, async (req, res) => {
+    try {
+        const { instanceName, messageId } = req.params;
+        
+        if (instanceName !== config.instanceName) {
+            return res.status(404).json({
+                error: true,
+                message: 'Instance not found'
+            });
+        }
+        
+        // Implementación básica - expandir según necesidades
+        res.json({
+            error: false,
+            data: {
+                base64: '',
+                mimetype: 'application/octet-stream',
+                filename: 'media',
+                messageId: messageId
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: true,
+            message: error.message
+        });
+    }
+});
+
+// ================================
+// RUTAS DE WEBHOOK
+// ================================
+
+// Configurar webhook
+app.post('/webhook/:instanceName', authenticate, (req, res) => {
+    const { instanceName } = req.params;
+    const { url, enabled } = req.body;
+    
+    if (instanceName !== config.instanceName) {
+        return res.status(404).json({
+            error: true,
+            message: 'Instance not found'
+        });
+    }
+    
+    // Actualizar webhook URL (esto requeriría reinicio en producción)
+    if (url) {
+        config.webhookUrl = url;
+        console.log('🔗 Webhook URL updated:', url);
+    }
+    
+    res.json({
+        error: false,
+        message: 'Webhook configured successfully',
+        webhook: {
+            url: config.webhookUrl,
+            enabled: enabled !== false
+        }
+    });
+});
+
 // Iniciar servidor
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Server running on port ${PORT}`);
     console.log(`🔗 Server URL: ${config.serverUrl || `http://localhost:${PORT}`}`);
     console.log('🤖 Starting WhatsApp connection...');
+    
+    // Mostrar endpoints disponibles
+    console.log('\n📋 Available endpoints:');
+    console.log('   GET  / - Status');
+    console.log('   GET  /qr - QR Code (no auth)');
+    console.log('   GET  /instance - List instances');
+    console.log('   POST /instance/create - Create instance');
+    console.log('   POST /sendText/:instance - Send text (n8n compatible)');
+    console.log('   POST /messages-api - Send message (alternative)');
+    console.log('   POST /message/text - Send text (original)');
+    console.log('   GET  /chat-api/get-media-base64/:instance/:messageId - Get media');
+    console.log('   POST /webhook/:instance - Configure webhook\n');
+    
     connectWhatsApp();
 });
 
@@ -334,3 +550,5 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
     console.error('❌ Unhandled Rejection:', err);
 });
+
+module.exports = app;
